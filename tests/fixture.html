@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN" data-mode="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Third-party render fixture</title>
+  <style>
+    body { max-width: 1000px; margin: 32px auto; padding: 0 24px; font: 16px/1.6 system-ui, sans-serif; }
+    .message { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
+    pre { background: #f6f6f4; padding: 12px; overflow: auto; }
+    #status { position: fixed; top: 8px; right: 8px; background: #111; color: #fff; padding: 6px 10px; border-radius: 8px; }
+  </style>
+  <script src="../src/mathjax-config.js"></script>
+  <script src="../vendor/mathjax-3.2.2-tex-svg-full.js"></script>
+  <script src="../vendor/katex-0.16.22.min.js"></script>
+  <script src="../data/third-party-render/katex-mhchem.min.js"></script>
+  <script src="../data/third-party-render/mhchemparser-4.2.1.js"></script>
+  <script src="../vendor/mathjax-3.2.2-tex-mhchem.js"></script>
+  <script src="../vendor/mermaid-12.0.0.min.js"></script>
+  <script src="../src/runtime.js"></script>
+</head>
+<body>
+  <div id="status">fixture</div>
+  <div class="message">
+    <p>Inline: \(E = mc^2\), \(\ce{H2O}\), \(\mathbf{F}=m\mathbf{a}\), $\frac{a}{b}$.</p>
+    <p>Complex: \(\displaystyle \sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6}\), \(\operatorname{rank}(A)\), \(\begin{pmatrix} a & b \\ c & d \end{pmatrix}\).</p>
+    <pre><code class="language-math">\begin{align}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \cdot \mathbf{B} &= 0 \\
+\nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \\
+\nabla \times \mathbf{B} &= \mu_0\mathbf{J}+\mu_0\varepsilon_0\frac{\partial \mathbf{E}}{\partial t}
+\end{align}</code></pre>
+    <pre><code class="language-math">\ce{2H2 + O2 -> 2H2O}</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">flowchart LR
+  A[用户] --> B{Claude}
+  B -->|代码| C[渲染]
+  B -->|数学| D[MathJax]
+  B -->|图表| E[Mermaid]</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">sequenceDiagram
+  participant U as 用户
+  participant C as Claude
+  participant P as Patch
+  U->>C: 输出 Mermaid
+  C->>P: 注入 DOM
+  P-->>C: SVG
+  C-->>U: 图表</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">classDiagram
+  class Renderer {
+    +renderMermaid()
+    +renderMath()
+  }
+  Renderer <|-- MathJaxRenderer
+  Renderer <|-- MermaidRenderer</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">erDiagram
+  USER ||--o{ MESSAGE : sends
+  MESSAGE ||--o{ BLOCK : contains
+  BLOCK }o--|| RENDERER : uses</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">gantt
+  title Patch schedule
+  dateFormat YYYY-MM-DD
+  section Build
+  Rust runtime :a1, 2026-10-01, 2d
+  Injector    :a2, after a1, 3d
+  Verification:a3, after a2, 2d</code></pre>
+  </div>
+
+  <div class="message">
+    <pre><code class="language-mermaid">mindmap
+  root((补丁))
+    定位
+      asar
+      主视图
+    渲染
+      Mermaid
+      MathJax
+    验证</code></pre>
+  </div>
+
+  <div class="message">
+    <div class="language-mermaid">
+      <pre><code>flowchart LR
+  W[外层 class] --> X[渲染成功]</code></pre>
+    </div>
+  </div>
+
+  <div class="message">
+    <pre><code>sequenceDiagram
+  A->>B: no language class
+  B-->>A: keyword fallback</code></pre>
+  </div>
+
+  <div class="message" id="tall-case">
+    <pre><code class="language-mermaid">flowchart TD
+  A0[步骤 0] --> A1[步骤 1]
+  A1 --> A2[步骤 2]
+  A2 --> A3[步骤 3]
+  A3 --> A4[步骤 4]
+  A4 --> A5[步骤 5]
+  A5 --> A6[步骤 6]
+  A6 --> A7[步骤 7]
+  A7 --> A8[步骤 8]
+  A8 --> A9[步骤 9]
+  A9 --> A10[步骤 10]
+  A10 --> A11[步骤 11]
+  A12 --> A13[步骤 13]
+  A13 --> A14[步骤 14]
+  A14 --> A15[步骤 15]
+  A15 --> A16[步骤 16]
+  A16 --> A17[步骤 17]
+  A17 --> A18[步骤 18]
+  A18 --> A19[步骤 19]</code></pre>
+  </div>
+
+  <div class="message" id="wide-case">
+    <pre><code class="language-mermaid">flowchart LR
+  W0[节点 0] --> W1[节点 1] --> W2[节点 2] --> W3[节点 3] --> W4[节点 4] --> W5[节点 5] --> W6[节点 6]
+  W0 --> W7[节点 7] --> W8[节点 8] --> W9[节点 9] --> W10[节点 10] --> W11[节点 11] --> W12[节点 12]</code></pre>
+  </div>
+
+  <div class="message" id="stream-case">
+    <pre><code class="language-mermaid" id="stream-code">flowchart TD
+  S0[开始] --> S1[解析]</code></pre>
+  </div>
+
+  <div class="message" id="host-copy-case">
+    <div class="host-block">
+      <button id="host-copy" aria-label="Copy code">Copy code</button>
+      <pre><code class="language-mermaid">flowchart LR
+  H0[宿主] --> H1[按钮]</code></pre>
+    </div>
+  </div>
+
+  <div class="message" id="late-host-case">
+    <div class="late-block">
+      <pre><code class="language-mermaid">flowchart LR
+  L0[后加] --> L1[按钮]</code></pre>
+    </div>
+  </div>
+
+  <script>
+    setTimeout(function () {
+      var block = document.querySelector('#late-host-case .late-block');
+      if (!block) return;
+      var late = document.createElement('button');
+      late.id = 'late-host-copy';
+      late.textContent = 'Copy code';
+      block.appendChild(late);
+    }, 1200);
+  </script>
+
+  <div class="message" id="shell-host-case">
+    <div class="shell-block">
+      <button id="empty-shell-copy" aria-label=""></button>
+      <pre><code class="language-mermaid">flowchart LR
+  E0[空壳] --> E1[补文字]</code></pre>
+    </div>
+  </div>
+
+  <script>
+    setTimeout(function () {
+      var late = document.getElementById('empty-shell-copy');
+      if (late) late.setAttribute('aria-label', 'Copy code');
+    }, 1500);
+  </script>
+
+  <div class="message" id="split-math-case">
+    <p id="split-math"><span>$$\begin{aligned}</span><span>\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0}</span><span>\end{aligned}$$</span></p>
+    <p id="chem-math">化学式：$\ce{2H2 + O2 -> 2H2O}$</p>
+  </div>
+
+  <div class="message" id="katex-chem-case">
+    <span id="host-katex"></span>
+    <script>
+      // 模拟宿主的 KaTeX：没有 mhchem，\ce 会被排错
+      setTimeout(function () {
+        var bare = document.createElement('span');
+        bare.className = 'katex';
+        bare.innerHTML = '<span class="katex-mathml"><math><semantics><mrow><mi>c</mi><mi>e</mi></mrow>'
+          + '<annotation encoding="application/x-tex">\\ce{2H2 + O2 -> 2H2O}</annotation>'
+          + '</semantics></math></span><span class="katex-html">ce</span>';
+        document.getElementById('host-katex').appendChild(bare);
+      }, 900);
+    </script>
+  </div>
+
+  <div id="shadow-host"></div>
+  <script>
+    const shadow = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <div class="message">
+        <pre><code class="language-mermaid">flowchart LR
+  S[Shadow DOM] --> T[渲染成功]</code></pre>
+        <pre><code class="language-math">\\[\\int_0^1 x^2 dx = \\frac{1}{3}\\]</code></pre>
+      </div>`;
+  </script>
+
+  <script>
+    const closedHost = document.createElement('div');
+    document.body.appendChild(closedHost);
+    const closed = closedHost.attachShadow({ mode: 'closed' });
+    window.__claudeThirdPartyShadowRoots = window.__claudeThirdPartyShadowRoots || [];
+    window.__claudeThirdPartyShadowRoots.push(closed);
+    closed.innerHTML = `
+      <div class="message">
+        <pre><code class="language-mermaid">flowchart LR
+  C[Closed Shadow] --> D[渲染成功]</code></pre>
+        <pre><code class="language-math">\\[\\int_1^2 x dx = \\frac{3}{2}\\]</code></pre>
+      </div>`;
+  </script>
+</body>
+</html>

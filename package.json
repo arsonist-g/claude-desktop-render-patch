@@ -1,0 +1,49 @@
+{
+  "name": "@arsonist-g/claude-desktop-render-patch",
+  "version": "0.1.2",
+  "description": "Mermaid and full MathJax rendering patch for Claude Desktop, with an interactive npm CLI.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "claude-render-patch": "bin/cli.js"
+  },
+  "main": "src/patch.js",
+  "files": [
+    "bin/",
+    "src/",
+    "data/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "start": "node bin/cli.js",
+    "apply": "node bin/cli.js apply",
+    "restore": "node bin/cli.js restore",
+    "status": "node bin/cli.js status",
+    "build": "node scripts/build.js",
+    "test": "node tests/check.js && node tests/pan-bounds.js && node tests/asar-roundtrip.js && node tests/simulated-install.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "claude",
+    "claude-desktop",
+    "mermaid",
+    "mathjax",
+    "latex",
+    "render",
+    "patch",
+    "electron",
+    "asar"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,10 @@
+.work/
+node_modules/
+dist/
+backups/
+tmp-doc/
+*.log
+*.tgz
+__pycache__/
+.DS_Store
+data/third-party-render/

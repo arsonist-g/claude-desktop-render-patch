@@ -1,0 +1,2 @@
+*.min.js linguist-vendored
+data/third-party-render/mathjax-tex-svg-full.js linguist-vendored

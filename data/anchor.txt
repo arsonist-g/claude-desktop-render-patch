@@ -1,0 +1,1 @@
+let b=Fxe({webPreferences:{preload:n.default.join(a.app.getAppPath(),".vite/build/mainView.js"),additionalArguments:[`--desktop-features=${JSON.stringify(GU())}`,fK()]}});
