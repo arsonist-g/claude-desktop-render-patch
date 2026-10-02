@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseAsar, readAsar, readEntry, replaceFile, sha256 } = require('./asar');
+const { iterFiles, parseAsar, readAsar, readEntry, replaceFile, sha256 } = require('./asar');
 const { createBackup, listBackups, readExeHash, restoreBackup, writeExeHash } = require('./backup');
 const { SUPPORTED_VERSIONS } = require('./detect');
 
@@ -30,16 +30,7 @@ function loadAnchor() {
   return fs.readFileSync(ANCHOR_PATH, 'utf8').trim();
 }
 
-function assertSupported(installation) {
-  if (!SUPPORTED_VERSIONS.includes(installation.version)) {
-    throw new Error(
-      `Claude ${installation.version} is not supported yet. Supported versions: ${SUPPORTED_VERSIONS.join(', ')}`,
-    );
-  }
-}
-
 function applyPatch(installation, options = {}) {
-  assertSupported(installation);
   if (!installation.writable && !options.ignorePermissions) {
     throw new Error(`No write permission: ${installation.appAsar}`);
   }
@@ -57,19 +48,19 @@ function applyPatch(installation, options = {}) {
   );
   let workingAsar = { data: result.data, ...parseAsar(result.data) };
 
-  const current = readEntry(workingAsar, TARGET_ENTRY).toString('utf8');
+  const injection = resolveInjectionPoint(asar, anchor);
+  const current = readEntry(workingAsar, injection.entryPath).toString('utf8');
   const withoutPrevious = stripLoaderBlock(current);
-  const matches = countOccurrences(withoutPrevious, anchor);
-  if (matches !== 1) {
-    throw new Error(
-      `Could not locate the injection point in ${TARGET_ENTRY}. Found ${matches} matches; expected 1.`,
-    );
+  if (injection.insertAt > withoutPrevious.length) {
+    throw new Error(`Injection offset is out of bounds in ${injection.entryPath}.`);
   }
 
-  const loader = fs.readFileSync(path.join(PAYLOAD_DIR, 'main-inject.js'), 'utf8');
-  const insertAt = withoutPrevious.indexOf(anchor) + anchor.length;
-  const patched = `${withoutPrevious.slice(0, insertAt)}\n${loader}\n${withoutPrevious.slice(insertAt)}`;
-  result = replaceFile(workingAsar, TARGET_ENTRY, Buffer.from(patched, 'utf8'));
+  let loader = fs.readFileSync(path.join(PAYLOAD_DIR, 'main-inject.js'), 'utf8');
+  if (injection.identifier !== 'b') {
+    loader = loader.replace('attach(b.webContents);', `attach(${injection.identifier}.webContents);`);
+  }
+  const patched = `${withoutPrevious.slice(0, injection.insertAt)}\n${loader}\n${withoutPrevious.slice(injection.insertAt)}`;
+  result = replaceFile(workingAsar, injection.entryPath, Buffer.from(patched, 'utf8'));
 
   let cacheInvalidated = false;
   try {
@@ -80,29 +71,35 @@ function applyPatch(installation, options = {}) {
     // Older/other builds may not ship a compile-cache entry for this chunk.
   }
 
-  const originalHash = installation.exePath ? readExeHash(installation.exePath) : null;
-  const backup = options.noBackup ? null : createBackup(installation, originalHash);
-  const payloadReport = writePayload(installation, manifest);
-  atomicWrite(installation.appAsar, result.data);
+  let backup = null;
+  try {
+    const originalHash = installation.exePath ? readExeHash(installation.exePath) : null;
+    backup = options.noBackup ? null : createBackup(installation, originalHash);
+    const payloadReport = writePayload(installation, manifest);
+    atomicWrite(installation.appAsar, result.data);
 
-  let hashUpdated = false;
-  if (installation.exePath) {
-    writeExeHash(installation.exePath, result.headerHash);
-    hashUpdated = true;
+    let hashUpdated = false;
+    if (installation.exePath) {
+      writeExeHash(installation.exePath, result.headerHash);
+      hashUpdated = true;
+    }
+
+    return {
+      action: 'apply',
+      installation,
+      backup,
+      payload: payloadReport,
+      targetEntry: injection.entryPath,
+      mainViewEntry: MAIN_VIEW_ENTRY,
+      headerHash: result.headerHash,
+      hashUpdated,
+      cacheInvalidated,
+      patchedBytes: patched.length,
+    };
+  } catch (error) {
+    if (backup) rollbackFailedApply(installation, backup, error);
+    throw error;
   }
-
-  return {
-    action: 'apply',
-    installation,
-    backup,
-    payload: payloadReport,
-    targetEntry: TARGET_ENTRY,
-    mainViewEntry: MAIN_VIEW_ENTRY,
-    headerHash: result.headerHash,
-    hashUpdated,
-    cacheInvalidated,
-    patchedBytes: patched.length,
-  };
 }
 
 function restorePatch(installation, backupId) {
@@ -129,12 +126,12 @@ function status(installation) {
   };
   try {
     const asar = readAsar(installation.appAsar);
-    const current = readEntry(asar, TARGET_ENTRY).toString('utf8');
+    const patchedEntry = findPatchedEntry(asar);
     const mainView = readEntry(asar, MAIN_VIEW_ENTRY).toString('utf8');
-    result.installed = current.includes(LOADER_START) &&
-      current.includes(LOADER_END) &&
+    result.installed = Boolean(patchedEntry) &&
       mainView.includes(SHADOW_HOOK_START) &&
       mainView.includes(SHADOW_HOOK_END);
+    if (patchedEntry) result.targetEntry = patchedEntry;
   } catch (_) {
     result.installed = false;
   }
@@ -197,6 +194,110 @@ function movePayloadAside(installation) {
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.renameSync(source, destination);
   return destination;
+}
+
+function resolveInjectionPoint(asar, anchor) {
+  try {
+    const current = stripLoaderBlock(readEntry(asar, TARGET_ENTRY).toString('utf8'));
+    const matches = countOccurrences(current, anchor);
+    if (matches === 1) {
+      return {
+        entryPath: TARGET_ENTRY,
+        identifier: 'b',
+        insertAt: current.indexOf(anchor) + anchor.length,
+      };
+    }
+    if (matches > 1) {
+      throw new Error(`Found ${matches} injection points in ${TARGET_ENTRY}; expected 1.`);
+    }
+  } catch (error) {
+    if (/Found \d+ injection points/.test(error.message)) throw error;
+  }
+
+  const candidates = [];
+  for (const item of iterFiles(asar.header)) {
+    if (!/^\.vite\/build\/index\.chunk-.*\.js$/.test(item.path)) continue;
+    let content;
+    try {
+      content = stripLoaderBlock(readEntry(asar, item.path).toString('utf8'));
+    } catch (_) {
+      continue;
+    }
+    const marker = '".vite/build/mainView.js"';
+    let markerIndex = -1;
+    while ((markerIndex = content.indexOf(marker, markerIndex + 1)) >= 0) {
+      const declarationStart = content.lastIndexOf('let ', markerIndex);
+      if (declarationStart < 0 || markerIndex - declarationStart > 500) continue;
+      const declaration = content.slice(declarationStart, markerIndex);
+      const match = /^let\s+([A-Za-z_$][\w$]*)\s*=/.exec(declaration);
+      if (!match) continue;
+      const backgroundIndex = content.indexOf('setBackgroundColor("#00000000")', markerIndex);
+      if (backgroundIndex < 0 || backgroundIndex - markerIndex > 500) continue;
+      const statementEnd = content.indexOf(';', markerIndex);
+      if (statementEnd < 0 || statementEnd > backgroundIndex) continue;
+      candidates.push({
+        entryPath: item.path,
+        identifier: match[1],
+        insertAt: statementEnd + 1,
+      });
+    }
+  }
+
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 0) {
+    throw new Error('Could not locate the injection point in the .vite/build main chunks.');
+  }
+  throw new Error(`Could not locate a unique injection point; found ${candidates.length} candidates.`);
+}
+
+function findPatchedEntry(asar) {
+  try {
+    const current = readEntry(asar, TARGET_ENTRY).toString('utf8');
+    if (current.includes(LOADER_START) && current.includes(LOADER_END)) return TARGET_ENTRY;
+  } catch (_) {
+    // The target chunk name changes between Claude Desktop builds.
+  }
+  const matches = [];
+  for (const item of iterFiles(asar.header)) {
+    if (!/^\.vite\/build\/index\.chunk-.*\.js$/.test(item.path)) continue;
+    try {
+      const current = readEntry(asar, item.path).toString('utf8');
+      if (current.includes(LOADER_START) && current.includes(LOADER_END)) matches.push(item.path);
+    } catch (_) {
+      // A partially installed or foreign archive is not a patch target.
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function rollbackFailedApply(installation, backupPath, error) {
+  const backup = {
+    id: path.basename(backupPath),
+    path: backupPath,
+    appAsar: path.join(backupPath, 'app.asar'),
+  };
+  const rollback = {
+    attempted: true,
+    backup: backup.id,
+    restored: false,
+    payloadRemoved: false,
+  };
+  try {
+    restoreBackup(installation, backup);
+    rollback.restored = true;
+  } catch (restoreError) {
+    rollback.restoreError = restoreError.message;
+  }
+  try {
+    rollback.removed = movePayloadAside(installation);
+    rollback.payloadRemoved = true;
+  } catch (cleanupError) {
+    rollback.cleanupError = cleanupError.message;
+  }
+  if (!rollback.restored) rollback.error = rollback.restoreError;
+  else if (!rollback.payloadRemoved) rollback.error = rollback.cleanupError;
+  error.rollback = rollback;
+  return error;
 }
 
 function stripShadowHookBlock(content) {

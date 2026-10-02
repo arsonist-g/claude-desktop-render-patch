@@ -117,7 +117,7 @@ async function runApply(args = {}) {
     const installation = args.targetInstallation || await chooseInstallation(detectInstallations(), args);
     if (!installation) throw new Error('没有检测到 Claude Desktop。');
     if (!installation.supported) {
-      throw new Error(`Claude ${installation.version} 暂不支持。`);
+      writeLine(color(`警告：Claude ${installation.version} 未在已验证版本列表中，将尝试应用。`, ANSI.yellow));
     }
     const current = status(installation);
     if (current.installed && !args.force && !(await confirm('补丁已经安装，是否重新写入？', true))) {
@@ -209,7 +209,7 @@ async function runStatus(args = {}) {
       writeLine('');
       writeLine(color(installationLabel(install), ANSI.bold));
       writeLine(`  路径: ${install.appAsar}`);
-      writeLine(`  版本: ${install.version}${row.supported ? '' : color(' (不支持)', ANSI.yellow)}`);
+      writeLine(`  版本: ${install.version}${row.supported ? '' : color(' (未验证)', ANSI.yellow)}`);
       writeLine(`  补丁: ${row.installed ? color('已安装', ANSI.green) : color('未安装', ANSI.gray)}`);
       writeLine(`  载荷: ${row.payloadReady ? color('完整', ANSI.green) : color('缺失或哈希不符', ANSI.yellow)}`);
       writeLine(`  完整性: ${row.hashMatches ? color('匹配', ANSI.green) : color('不匹配', ANSI.red)}`);

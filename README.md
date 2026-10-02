@@ -81,13 +81,13 @@ npx @arsonist-g/claude-desktop-render-patch apply --kill --yes
 | Windows 非 Store 安装 | 代码路径已实现，未在同一版本上实测 |
 | macOS / Linux | 代码路径已实现，未实测；修改 app 后可能需要重新签名 |
 
-Claude Desktop 更新后 `app.asar` 结构可能变化。当前补丁只声明支持 `2.9939.2`，遇到新版本会拒绝写入，避免误改。
+Claude Desktop 更新后 `app.asar` 结构可能变化。当前已验证版本是 `2.9939.2`；其他版本只会显示警告并继续尝试，新版主 chunk 改名时会自动按注入点定位。找不到注入点或写入失败才会中止。
 
 ## 风险与回滚
 
 - 补丁会修改 `app.asar` 和 `Claude.exe`，会破坏 Windows Authenticode 签名。
-- 应用补丁前会自动备份原 `app.asar` 和原始 `Claude.exe` 完整性哈希。
-- 运行 `restore` 可以恢复；如果应用无法启动，也可以从备份目录手工复制回 `app.asar`。
+- 应用补丁前会自动备份原 `app.asar` 和原始 `Claude.exe` 完整性哈希；写入过程中失败会自动恢复本次备份并移走本次载荷。
+- 运行 `restore` 可以手动恢复任意备份；如果应用无法启动，也可以从备份目录手工复制回 `app.asar`。
 - 不需要 Cowork / 截图工作区时再考虑使用；修改签名后相关签名校验功能可能受影响。
 
 ## 开发
