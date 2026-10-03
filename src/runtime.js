@@ -679,17 +679,24 @@
     return { host: wrapper, content: content, box: content, baseKey: "tprBaseWidth", zoomKey: "tprZoom", modal: false };
   }
 
-  /* 预览框的高度在首次渲染后固定下来，缩放只改变框内的图，不改变框本身 */
+  /* 预览框的尺寸在首次渲染后固定下来，缩放只改变框内的图，不改变框本身。
+     宽度向上以容器为上限、向下以图的自然宽度为准：小图不再被硬拉到容器宽度，
+     否则竖长的小图会被放大到超过视口高度，逼得用户滚动。 */
   function stabilizePreview(content) {
     if (!content || content.dataset.tprFixed === "1") return;
     var target = panTargetOf(content);
     if (!target) return;
     var rect = target.getBoundingClientRect();
-    if (!rect.height) return;
+    if (!rect.width || !rect.height) return;
     var column = Math.round(content.clientWidth || 0) || 460;
-    var limit = Math.max(160, Math.min(column, Math.round((window.innerHeight || 800) * 0.8)));
-    var layout = Math.max(120, column);
-    var scaledHeight = rect.height * (layout / (rect.width || layout));
+    var natural = Number(target.dataset.tprNaturalWidth || 0) || rect.width || column;
+    var naturalRatio = rect.width ? rect.height / rect.width : 1;
+    var viewportHeight = window.innerHeight || 800;
+    var layout = Math.round(Math.max(120, Math.min(column, natural)));
+    /* 高度上限按视口，而不是按图宽：窄而小、但稍高的图不该被卡在图宽那么矮的框里。
+       只有图自身真的高于本卡片允许的高度时才需要拖动查看。 */
+    var limit = Math.max(160, Math.round(viewportHeight * 0.72));
+    var scaledHeight = layout * naturalRatio;
     content.style.maxHeight = limit + "px";
     content.style.height = Math.max(120, Math.min(limit, Math.round(scaledHeight))) + "px";
     content.__tprLayoutWidth = layout;
@@ -1206,6 +1213,15 @@
     }
   }
 
+  /* 判断元素是否溢出的可见区：全屏里是 modal-content 本身，卡片里就是内容盒。
+     面板比内容盒多出工具栏和内边距，拿它当可见区会把可用高度算大。 */
+  function panViewportOf(element, fallback) {
+    if (element && element.closest && element.closest(".tpr-modal-content")) {
+      return element;
+    }
+    return fallback;
+  }
+
   function measurePan(element, viewport, target) {
     var state = panStateOf(element);
     var box = viewport.getBoundingClientRect();
@@ -1219,7 +1235,7 @@
 
   function settlePan(element, viewport, target) {
     var state = panStateOf(element);
-    var bounds = measurePan(element, viewport, target);
+    var bounds = measurePan(element, panViewportOf(element, viewport), target);
     applyPanOffset(
       element,
       target,
@@ -1262,7 +1278,10 @@
       if (!target) {
         return;
       }
-      var bounds = measurePan(element, box, target);
+      /* 全屏里真正的可见区是 modal-content，面板还包着工具栏和它的内边距；
+         用面板测量会把可用高度算大，导致明明溢出却判定不能拖动。 */
+      var panViewport = panViewportOf(element, box);
+      var bounds = measurePan(element, panViewport, target);
       if (!bounds.overflowX && !bounds.overflowY) {
         return;
       }
@@ -1310,12 +1329,13 @@
           return;
         }
       }
-      var bounds = measurePan(element, box, target);
+      var wheelViewport = panViewportOf(element, box);
+      var bounds = measurePan(element, wheelViewport, target);
       if (!bounds.overflowX && !bounds.overflowY) {
         return;
       }
       var state = panStateOf(element);
-      var unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? (box.clientHeight || 400) : 1;
+      var unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? (wheelViewport.clientHeight || 400) : 1;
       var deltaX = (event.deltaX || 0) * unit;
       var deltaY = (event.deltaY || 0) * unit;
       if (event.shiftKey && !deltaX) {
@@ -1338,7 +1358,7 @@
       element.dataset.pannable = "false";
       return false;
     }
-    var bounds = measurePan(element, viewport, target);
+    var bounds = measurePan(element, panViewportOf(element, viewport), target);
     var overflow = bounds.overflowX || bounds.overflowY;
     element.dataset.pannable = overflow ? "true" : "false";
     return overflow;
@@ -1361,6 +1381,36 @@
     });
   }
 
+  /* 全屏按"能放下就尽量放大"来排：小图在大窗口里被放大到放得下的最大尺寸，
+     横图也不至于只有自然尺寸的一小块。只在超过限度时才缩。 */
+  function fitFullView(modal, modalContent, panel) {
+    var svg = modalContent && modalContent.querySelector("svg");
+    if (!svg || !panel) return;
+    var natural = Number(svg.dataset.tprNaturalWidth || 0) || Number(svg.dataset.tprBaseWidth || 0) || svg.getBoundingClientRect().width;
+    if (!natural) return;
+    var ratio = 1;
+    var viewBox = svg.viewBox && svg.viewBox.baseVal;
+    var rect = svg.getBoundingClientRect();
+    if (viewBox && viewBox.width) ratio = viewBox.height / viewBox.width;
+    else if (rect.width) ratio = rect.height / rect.width;
+    /* 以内容盒的可用空间为准，而不是面板尺寸：面板里还有工具栏和内边距，
+       用面板高度会把图算大一点点，导致全屏里反而出现滚动。 */
+    var availableWidth = Math.max(160, (modalContent.clientWidth || panel.clientWidth) - 8);
+    var availableHeight = Math.max(160, (modalContent.clientHeight || panel.clientHeight) - 8);
+    var fit = Math.min(availableWidth / natural, availableHeight / (natural * ratio));
+    fit = Math.max(0.15, Math.min(fit, 6));
+    var layout = Math.max(1, Math.round(natural * fit));
+    svg.dataset.tprModalBaseWidth = String(natural);
+    modalContent.__tprLayoutWidth = layout;
+    modalContent.__tprScale = 1;
+    modal.dataset.tprModalZoom = "1";
+    svg.style.maxWidth = "none";
+    svg.style.width = layout + "px";
+    svg.style.transform = "";
+    resetPan(modalContent);
+    syncPanState(modalContent, modalContent);
+  }
+
   function openFullView(wrapper) {
     var modal = document.getElementById("tpr-modal");
     if (!modal) {
@@ -1381,13 +1431,6 @@
     var content = wrapper.querySelector(".tpr-content");
     var modalContent = modal.querySelector(".tpr-modal-content");
     if (!content || !modalContent) return;
-    /* 先量宽度：内容搬走以后宿主可能把 wrapper 收缩到 fit-content */
-    var cardWidth = Math.max(
-      Math.round(wrapper.getBoundingClientRect().width || 0),
-      Math.round(content.clientWidth || 0),
-      Math.round((wrapper.querySelector(".tpr-toolbar") || content).getBoundingClientRect().width || 0)
-    );
-    var frameWidth = Math.max(280, cardWidth);
     resetPan(content);
     resetPan(modalContent);
     modalContent.textContent = "";
@@ -1395,10 +1438,14 @@
       modalContent.appendChild(content.firstChild);
     }
     var panel = modal.querySelector(".tpr-modal-panel");
-    installPanHandlers(modalContent, panel);
-    var frameHeight = Math.min(frameWidth, Math.round((window.innerHeight || 800) * 0.9));
+    installPanHandlers(modalContent, modalContent);
+    /* 全屏用视口尺寸，不再被卡片宽度限制，否则小卡片里的图在全屏里还是很小 */
+    var frameWidth = Math.max(280, Math.min(Math.round((window.innerWidth || 1200) * 0.94), 1600));
+    var frameHeight = Math.max(240, Math.round((window.innerHeight || 800) * 0.92));
     panel.style.width = frameWidth + "px";
     panel.style.height = frameHeight + "px";
+    panel.style.maxWidth = "94vw";
+    panel.style.maxHeight = "94vh";
     var cardToolbar = wrapper.querySelector(".tpr-toolbar");
     if (cardToolbar) {
       var expandAction = cardToolbar.querySelector(".tpr-expand");
@@ -1409,26 +1456,7 @@
     modal.__tprWrapper = wrapper;
     modal.hidden = false;
     requestAnimationFrame(function () {
-      var svg = modalContent.querySelector("svg");
-      if (svg) {
-        var natural = Number(svg.dataset.tprNaturalWidth || 0) || Number(svg.dataset.tprBaseWidth || 0) || svg.getBoundingClientRect().width;
-        var ratio = 1;
-        var viewBox = svg.viewBox && svg.viewBox.baseVal;
-        var rect = svg.getBoundingClientRect();
-        if (viewBox && viewBox.width) ratio = viewBox.height / viewBox.width;
-        else if (rect.width) ratio = rect.height / rect.width;
-        var fit = Math.min(1, (panel.clientWidth - 32) / natural, (panel.clientHeight - 32) / (natural * ratio));
-        fit = Math.max(0.15, fit);
-        var layout = Math.max(1, Math.round(natural * fit));
-        svg.dataset.tprModalBaseWidth = String(natural);
-        modalContent.__tprLayoutWidth = layout;
-        modalContent.__tprScale = 1;
-        modal.dataset.tprModalZoom = "1";
-        svg.style.maxWidth = "none";
-        svg.style.width = layout + "px";
-        svg.style.transform = "";
-      }
-      syncPanState(modalContent, panel);
+      fitFullView(modal, modalContent, panel);
     });
   }
 
@@ -2107,7 +2135,14 @@
   });
 
   window.addEventListener("resize", function () {
-    setTimeout(refreshOverflowStates, 100);
+    setTimeout(function () {
+      var modal = document.getElementById("tpr-modal");
+      if (modal && !modal.hidden) {
+        fitFullView(modal, modal.querySelector(".tpr-modal-content"), modal.querySelector(".tpr-modal-panel"));
+        return;
+      }
+      refreshOverflowStates();
+    }, 100);
   });
 
   if (window.matchMedia) {

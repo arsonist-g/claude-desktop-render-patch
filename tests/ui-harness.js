@@ -231,9 +231,19 @@ async function main() {
     const initialFit = await evaluate(`(() => {
       const content = document.querySelector('#tall-case .tpr-content');
       const svg = content.querySelector('svg');
-      return { box: Math.round(content.clientWidth), svg: Math.round(svg.getBoundingClientRect().width) };
+      return {
+        box: Math.round(content.clientWidth),
+        svg: Math.round(svg.getBoundingClientRect().width),
+        natural: Math.round(Number(svg.dataset.tprNaturalWidth || 0)),
+        overflows: svg.getBoundingClientRect().width > content.clientWidth + 3
+      };
     })()`);
-    check('initial view fills the container width', () => assert(Math.abs(initialFit.svg - initialFit.box) <= 3, JSON.stringify(initialFit)));
+    // 新契约：卡片宽度以容器为上限、以图自然宽度为准，不再把小图硬拉到满宽
+    check('card view does not stretch the diagram past its natural width',
+      () => assert(typeof initialFit.natural === 'number' && initialFit.natural > 0 && initialFit.svg <= initialFit.natural + 3,
+        JSON.stringify(initialFit)));
+    check('card view keeps the diagram inside its box',
+      () => assert(!initialFit.overflows, JSON.stringify(initialFit)));
 
     const hostCopy = await evaluate(`(() => {
       const node = document.querySelector('#host-copy');
@@ -485,6 +495,8 @@ async function main() {
         svgWidth: r ? Math.round(r.width) : 0,
         toolbarInPanel: !!(modal && modal.querySelector('.tpr-modal-panel > .tpr-toolbar')),
         frameMatchesCard: !!(p && cardRect && Math.abs(p.width - cardRect.width) <= 2),
+        frameWiderThanCard: !!(p && cardRect && p.width > cardRect.width + 2),
+        withinViewport: !!(p && p.width <= window.innerWidth + 1 && p.height <= window.innerHeight + 1),
         zoomButtons: modal ? Array.prototype.filter.call(modal.querySelectorAll('.tpr-zoom'), (b) => getComputedStyle(b).display !== 'none').length : 0,
         plus: q ? { cx: q.x + q.width / 2, cy: q.y + q.height / 2 } : null
       };
@@ -496,7 +508,10 @@ async function main() {
     check('full view shows the diagram', () => assert(opened.hasSvg, 'modal has no svg'));
     check('full view fits the whole diagram inside a fixed frame', () => assert(opened.fits, JSON.stringify(opened.frame)));
     check('full view carries the action bar', () => assert(opened.toolbarInPanel && opened.plus, JSON.stringify(opened)));
-    check('full view frame follows the conversation width', () => assert(opened.frameMatchesCard, JSON.stringify({ frame: opened.frame, card: opened.frameMatchesCard })));
+    // 新契约：全屏用视口大小，不再被卡片宽度限制，小图才有放大空间
+    check('full view frame uses the viewport, not the card width',
+      () => assert(opened.frameWiderThanCard && opened.withinViewport,
+        JSON.stringify({ frame: opened.frame, wider: opened.frameWiderThanCard, withinViewport: opened.withinViewport })));
     check('full view shows the zoom buttons', () => assert(opened.zoomButtons === 2, `visible zoom buttons: ${opened.zoomButtons}`));
 
     await mouse('mousePressed', opened.plus.cx, opened.plus.cy);
@@ -518,20 +533,37 @@ async function main() {
     const afterWheelOut = await modalState();
     check('ctrl + wheel zooms back out', () => assert(Math.abs(afterWheelOut.svgWidth - beforeWheel.svgWidth) <= 3, `${beforeWheel.svgWidth} -> ${afterWheelOut.svgWidth}`));
 
-    // drag inside the full view stays inside the frame
+    // 先把图放大到确实超出全屏内容盒，再验证拖动被夹在框内
+    const overflowBeforeDrag = await evaluate(`(() => {
+      const content = document.querySelector('#tpr-modal .tpr-modal-content');
+      const svg = content && content.querySelector('svg');
+      if (!svg) return false;
+      const r = svg.getBoundingClientRect();
+      return r.height > content.clientHeight + 1 || r.width > content.clientWidth + 1;
+    })()`);
+    check('full view diagram overflows after zoom for the drag test', () => assert(overflowBeforeDrag, 'diagram did not overflow the full view'));
     await mouse('mousePressed', 400, 320);
     await mouse('mouseMoved', 400, 120, { buttons: 1 });
     await mouse('mouseMoved', 400, -3000, { buttons: 1 });
     await sleep(80);
     const modalPan = await evaluate(`(() => {
-      const panel = document.querySelector('#tpr-modal .tpr-modal-panel');
-      const svg = document.querySelector('#tpr-modal .tpr-modal-content svg');
-      const p = panel.getBoundingClientRect();
+      const content = document.querySelector('#tpr-modal .tpr-modal-content');
+      const svg = content && content.querySelector('svg');
+      if (!svg) return { bottomGap: 999 };
+      const b = content.getBoundingClientRect();
       const r = svg.getBoundingClientRect();
-      return { transform: svg.style.transform, bottomGap: r.bottom - p.bottom };
+      return {
+        transform: svg.style.transform,
+        bottomGap: b.bottom - r.bottom,
+        topGap: r.top - b.top,
+        contentHeight: b.height,
+        svgHeight: r.height
+      };
     })()`);
     await mouse('mouseReleased', 400, -3000, { buttons: 0 });
-    check('dragging in the full view is clamped to the frame', () => assert(Math.abs(modalPan.bottomGap) <= 3, JSON.stringify(modalPan)));
+    // 向下猛拖到底后，图应被夹住：底边贴到内容盒底部（或顶边贴顶）。
+    check('dragging in the full view is clamped to the frame',
+      () => assert(Math.abs(modalPan.bottomGap) <= 3 || Math.abs(modalPan.topGap) <= 3, JSON.stringify(modalPan)));
 
     await evaluate("document.querySelector('#tpr-modal .tpr-modal-close').click()");
     await sleep(400);
@@ -547,6 +579,74 @@ async function main() {
       const value = String(closed.transform || '');
       assert(value === '' || /^translate\(0px,\s*0px\)/.test(value), `transform=${closed.transform}`);
     });
+
+    // --- small diagram sizing --------------------------------------------
+    // 回归：小竖图在卡片里不应被硬拉到容器宽度而高出预览框；全屏里应放大到放得下的大小。
+    await evaluate(`(() => {
+      const host = document.createElement('div');
+      host.className = 'message';
+      host.id = 'small-case';
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.className = 'language-mermaid';
+      code.textContent = 'flowchart TD\\n  N1[开始] --> N2[处理]\\n  N2 --> N3[结束]';
+      pre.appendChild(code);
+      host.appendChild(pre);
+      document.body.appendChild(host);
+    })()`);
+    let smallReady = false;
+    for (let i = 0; i < 40; i += 1) {
+      smallReady = await evaluate("!!document.querySelector('#small-case .tpr-content svg')");
+      if (smallReady) break;
+      await sleep(250);
+    }
+    check('small diagram card renders', () => assert(smallReady, 'small diagram never rendered'));
+    const smallCard = await evaluate(`(() => {
+      const card = document.querySelector('#small-case');
+      const content = card && card.querySelector('.tpr-content');
+      const svg = content && content.querySelector('svg');
+      if (!svg) return null;
+      const cs = getComputedStyle(content);
+      return {
+        natural: Math.round(Number(svg.dataset.tprNaturalWidth || 0)),
+        contentWidth: Math.round(content.clientWidth),
+        svgWidth: Math.round(svg.getBoundingClientRect().width),
+        scrollWidth: content.scrollWidth,
+        scrollHeight: content.scrollHeight,
+        clientHeight: content.clientHeight,
+        pannable: content.dataset.pannable
+      };
+    })()`);
+    check('a small diagram is not stretched beyond its natural width',
+      () => assert(smallCard && smallCard.natural > 0 && smallCard.svgWidth <= smallCard.natural + 3,
+        JSON.stringify(smallCard)));
+    check('a small diagram does not need scrolling inside its card',
+      () => assert(smallCard && smallCard.scrollWidth <= smallCard.contentWidth + 3 && smallCard.scrollHeight <= smallCard.clientHeight + 3,
+        JSON.stringify(smallCard)));
+
+    await evaluate("document.querySelector('#small-case .tpr-expand').click()");
+    await sleep(700);
+    const smallFull = await evaluate(`(() => {
+      const modal = document.getElementById('tpr-modal');
+      const svg = modal && modal.querySelector('.tpr-modal-content svg');
+      const content = modal && modal.querySelector('.tpr-modal-content');
+      const panel = modal && modal.querySelector('.tpr-modal-panel');
+      if (!svg || !panel) return null;
+      const p = panel.getBoundingClientRect();
+      const r = svg.getBoundingClientRect();
+      return {
+        svgWidth: Math.round(r.width),
+        svgHeight: Math.round(r.height),
+        fits: r.width <= p.width + 1 && r.height <= p.height + 1,
+        modalOverflow: content.scrollWidth > content.clientWidth + 3 || content.scrollHeight > content.clientHeight + 3
+      };
+    })()`);
+    const smallCardWidth = smallCard ? smallCard.svgWidth : 0;
+    check('small diagram fills the full view instead of staying tiny',
+      () => assert(smallFull && smallFull.svgWidth > smallCardWidth + 20, JSON.stringify(Object.assign({ cardWidth: smallCardWidth }, smallFull))));
+    check('full view keeps the enlarged small diagram fully visible',
+      () => assert(smallFull && smallFull.fits && !smallFull.modalOverflow, JSON.stringify(smallFull)));
+    await evaluate("(() => { const node = document.getElementById('tpr-modal'); if (node) node.remove(); })()");
 
     // --- copy button -----------------------------------------------------
     const copyIcon = await evaluate(`(() => {
