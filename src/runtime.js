@@ -900,23 +900,106 @@
     return out;
   }
 
-  /* 不管宿主用按钮、裸 div 还是别的东西挡在我们的操作条上：直接在操作条那一条带上
-     做命中测试，凡是"压在我们工具栏上方、且不属于我们"的元素一律隐藏。
-     这比猜宿主的 DOM 结构可靠。 */
+  /* 宿主自己的代码块悬浮工具条（Copy 按钮的点击层）会压在我们操作条上。
+     过去这里是"只要命中测试落在我们工具栏上、又不是我们的元素就一律隐藏"，
+     结果把浮在卡片上方的对话框、左上角按钮这类真正的应用 UI 一起藏掉了。
+     现在只隐藏两类东西，其余一律不碰。
+     另外隐藏只通过内联样式落地，不再往应用节点上加可被观察/复用的类。 */
+
   var OURS = ".tpr-rendered, #tpr-modal, .tpr-modal-panel";
 
   function isOurElement(node) {
     return !!(node && node.closest && node.closest(OURS));
   }
 
-  function hideIfOverToolbar(hit, band) {
-    if (!hit || hit.nodeType !== 1 || isOurElement(hit)) {
+  /* 对话框、菜单、导航、侧栏、顶部按钮簇等应用级 UI：无论压在哪张卡片上都绝不隐藏。 */
+  function isAppChrome(node) {
+    if (!node || node.nodeType !== 1) {
       return false;
     }
-    var tag = hit.tagName;
-    if (tag === "HTML" || tag === "BODY") {
+    var tag = node.tagName;
+    if (tag === "HTML" || tag === "BODY" || tag === "NAV" || tag === "HEADER" ||
+        tag === "ASIDE" || tag === "DIALOG" || tag === "FORM") {
+      return true;
+    }
+    if (node.matches && node.matches(
+      "[role='dialog'],[role='alertdialog'],[aria-modal='true'],[role='menu'],[role='menubar']," +
+      "[role='menuitem'],[role='navigation'],[role='banner'],[role='toolbar'],[role='tablist'],[role='tab']")) {
+      return true;
+    }
+    var style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+    if (style && style.position === "fixed") {
+      return true;
+    }
+    return false;
+  }
+
+  /* 覆盖层通常是宿主为代码块单独加的悬浮/粘性壳。工具条本身是宽而扁的一条，
+     这里要求命中的元素在两个方向上都足够小，避免把整块面板/容器当成覆盖层。 */
+  function isCodeBlockOverlayShape(node, band) {
+    if (!node || !node.getBoundingClientRect || !band) {
       return false;
     }
+    var rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return false;
+    }
+    if (rect.width > 520 || rect.height > band.height + 40) {
+      return false;
+    }
+    return true;
+  }
+
+  /* 不带文案、只负责接住点击的透明工具条壳：这是宿主 Copy 层的常见形态。 */
+  function isCopyControlShell(node) {
+    if (!node || node.nodeType !== 1 || !node.className || typeof node.className !== "string") {
+      return false;
+    }
+    if (node.className.indexOf("pointer-events-auto") < 0) {
+      return false;
+    }
+    if (node.className.indexOf("absolute") < 0 && node.className.indexOf("sticky") < 0) {
+      return false;
+    }
+    if (node.querySelector && node.querySelector("button, [role='button'], a, [tabindex]")) {
+      return false;
+    }
+    var text = (node.textContent || "").trim();
+    if (text.length > 0 && !HOST_COPY_TEXT.test(text)) {
+      return false;
+    }
+    var rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.width <= 200 && rect.height <= 64;
+  }
+
+  /* 命中点就在工具条带上，因此"压住操作条"已经由命中测试本身保证；
+     只有确实是我们想清理的复制控件/工具条壳才允许下沉。 */
+  function shouldHideCardOverlay(node, band) {
+    if (!node || node.nodeType !== 1 || isOurElement(node) || isAppChrome(node)) {
+      return false;
+    }
+    if (!isCodeBlockOverlayShape(node, band)) {
+      return false;
+    }
+    if (isCopyControl(node)) {
+      return true;
+    }
+    return isCopyControlShell(node);
+  }
+
+  /* 隐藏只落到内联样式上，并且记下改前的值，方便 restore / 自检时还回去。 */
+  function markHostHidden(node, reason) {
+    if (!node || node.nodeType !== 1) {
+      return false;
+    }
+    if (node.getAttribute("data-tpr-overlay")) {
+      return true;
+    }
+    node.setAttribute("data-tpr-overlay", reason || node.tagName);
+    node.__tprHiddenDisplay = node.style.display;
+    node.__tprHiddenPriority = node.style.getPropertyPriority("display");
+    node.style.setProperty("display", "none", "important");
+    node.style.setProperty("pointer-events", "none", "important");
     return true;
   }
 
@@ -946,21 +1029,18 @@
           }
           top = inner;
         }
-        if (!hideIfOverToolbar(top, band)) {
+        if (!top || isOurElement(top)) {
           continue;
         }
         /* 只动"压在工具栏上、又不是我们祖先"的元素；祖先一律不碰 */
         if (toolbar.contains(top) || (host && top.contains(host)) || top.contains(wrapper)) {
           continue;
         }
-        var rect = top.getBoundingClientRect();
-        if (!rect.width || !rect.height) {
+        if (!shouldHideCardOverlay(top, band)) {
           continue;
         }
-        if (rect.right > band.left && rect.left < band.right && rect.bottom > band.top - 8 && rect.top < band.bottom + 8) {
-          top.classList.add("tpr-host-hidden");
-          top.setAttribute("data-tpr-overlay", top.tagName + "|" + (typeof top.className === "string" ? top.className.slice(0, 60) : ""));
-        }
+        markHostHidden(top, "overlay|" + top.tagName + "|" +
+          (typeof top.className === "string" ? top.className.slice(0, 60) : ""));
       }
     });
   }

@@ -328,7 +328,10 @@ async function main() {
       const node = document.getElementById('blank-overlay');
       return { hidden: !!node && getComputedStyle(node).display === 'none' };
     })()`);
-    check('anything covering the card toolbar gets hidden', () => assert(overlayCheck.hidden, JSON.stringify(overlayCheck)));
+    // 契约更正：任意"压住工具栏"的普通元素不再隐藏；只有宿主复制控件才隐。
+    // 旧断言要求这个空白 div 必须被隐藏，正是误删对话框/按钮的根因，故反转。
+    check('a plain blank div over the card toolbar is left visible', () => assert(!overlayCheck.hidden, JSON.stringify(overlayCheck)));
+    await evaluate("(() => { const node = document.getElementById('blank-overlay'); if (node) node.remove(); })()");
 
     await evaluate(`(() => {
       const card = document.querySelector('#tall-case .tpr-rendered');
@@ -648,6 +651,154 @@ async function main() {
     check('streaming never shows a syntax error box', () => assert(!sawErrorWhileStreaming, 'an error box appeared mid-stream'));
     check('the finished stream renders once', () => assert(streamFinal.svg && !streamFinal.error, JSON.stringify(streamFinal)));
     check('the finished diagram matches the final source', () => assert(streamFinal.nodes >= 5, `nodes=${streamFinal.nodes}`));
+
+    // --- overlay sweep: app chrome must survive --------------------------
+    // 回归：重叠在卡片工具栏带上的应用级 UI（模态对话框、左上角按钮簇）
+    // 必须保持可见；只有宿主的 "Copy code"/"复制" 控件才允许被隐藏。
+    const overlayCard = "document.querySelector('#tall-case .tpr-rendered')";
+    await evaluate(`(() => { const card = ${overlayCard}; card.scrollIntoView({ block: 'start' }); })()`);
+    await sleep(200);
+
+    // (a) 盖住工具栏带的模态对话框必须保持可见
+    const dialogFixture = await evaluate(`(() => {
+      const card = ${overlayCard};
+      const band = card.querySelector('.tpr-toolbar').getBoundingClientRect();
+      const dialog = document.createElement('div');
+      dialog.id = 'app-modal-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.style.cssText = 'position:fixed;z-index:2147483600;left:' + Math.round(band.left) + 'px;top:' + Math.round(band.top) + 'px;width:' + Math.round(band.width) + 'px;height:' + Math.round(Math.max(200, band.height * 4)) + 'px;background:#fafafa;color:#111;border:1px solid #333';
+      dialog.textContent = 'synthetic dialog';
+      document.body.appendChild(dialog);
+      const rect = dialog.getBoundingClientRect();
+      return {
+        covers: rect.right > band.left && rect.left < band.right && rect.bottom > band.top && rect.top < band.bottom,
+        dialogRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        band: { left: band.left, top: band.top, right: band.right, bottom: band.bottom }
+      };
+    })()`);
+    await sleep(1800);
+    const dialogState = await evaluate(`(() => {
+      const node = document.getElementById('app-modal-dialog');
+      return { hidden: !node || getComputedStyle(node).display === 'none' };
+    })()`);
+    check('the dialog fixture geometrically covers the toolbar band', () => assert(dialogFixture.covers, JSON.stringify(dialogFixture)));
+    check('a modal dialog over the card toolbar stays visible', () => assert(!dialogState.hidden, JSON.stringify(dialogState)));
+    await evaluate("(() => { const node = document.getElementById('app-modal-dialog'); if (node) node.remove(); })()");
+
+    // (b) 左上角固定按钮簇压在工具栏带上时必须保持可见
+    const clusterFixture = await evaluate(`(() => {
+      const card = ${overlayCard};
+      const band = card.querySelector('.tpr-toolbar').getBoundingClientRect();
+      const cluster = document.createElement('div');
+      cluster.id = 'app-button-cluster';
+      const width = Math.ceil(band.left + band.width * 0.2) + 16;
+      const height = Math.max(48, Math.ceil(band.top + band.height + 10));
+      cluster.style.cssText = 'position:fixed;z-index:2147483600;left:8px;top:8px;width:' + width + 'px;height:' + height + 'px;display:flex;gap:4px;padding:3px;box-sizing:border-box;background:#eee;border:1px solid #333';
+      for (let i = 0; i < 3; i += 1) {
+        const button = document.createElement('button');
+        button.id = 'app-chrome-button-' + i;
+        button.setAttribute('aria-label', 'pane ' + i);
+        button.textContent = 'P' + i;
+        button.style.cssText = 'flex:1 1 0;min-width:0';
+        cluster.appendChild(button);
+      }
+      document.body.appendChild(cluster);
+      const rect = cluster.getBoundingClientRect();
+      return {
+        covers: rect.right > band.left && rect.left < band.right && rect.bottom > band.top && rect.top < band.bottom,
+        clusterRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        band: { left: band.left, top: band.top, right: band.right, bottom: band.bottom }
+      };
+    })()`);
+    await sleep(1800);
+    const clusterState = await evaluate(`(() => {
+      const cluster = document.getElementById('app-button-cluster');
+      const buttons = cluster ? Array.prototype.slice.call(cluster.querySelectorAll('button')) : [];
+      return {
+        clusterHidden: !cluster || getComputedStyle(cluster).display === 'none',
+        hiddenButtons: buttons.filter((button) => getComputedStyle(button).display === 'none').length,
+        buttonCount: buttons.length
+      };
+    })()`);
+    check('the top-left button cluster geometrically covers the toolbar band', () => assert(clusterFixture.covers, JSON.stringify(clusterFixture)));
+    check('a top-left cluster of app buttons over the card toolbar stays visible', () =>
+      assert(!clusterState.clusterHidden && clusterState.hiddenButtons === 0 && clusterState.buttonCount === 3, JSON.stringify(clusterState)));
+    await evaluate("(() => { const node = document.getElementById('app-button-cluster'); if (node) node.remove(); })()");
+
+    // (c) 压在工具栏带上的宿主 "Copy code" 控件仍然必须被隐藏
+    await evaluate(`(() => {
+      const card = ${overlayCard};
+      const band = card.querySelector('.tpr-toolbar').getBoundingClientRect();
+      const button = document.createElement('button');
+      button.id = 'band-copy-control';
+      button.setAttribute('aria-label', 'Copy code');
+      button.textContent = 'Copy code';
+      button.style.cssText = 'position:fixed;z-index:2147483600;left:' + Math.round(band.left + band.width / 2 - 40) + 'px;top:' + Math.round(band.top + 2) + 'px';
+      document.body.appendChild(button);
+    })()`);
+    await sleep(1800);
+    const bandCopy = await evaluate(`(() => {
+      const node = document.getElementById('band-copy-control');
+      return { exists: !!node, hidden: !!node && getComputedStyle(node).display === 'none' };
+    })()`);
+    check('a host "Copy code" control over the card toolbar is still hidden', () => assert(bandCopy.exists && bandCopy.hidden, JSON.stringify(bandCopy)));
+    await evaluate("(() => { const node = document.getElementById('band-copy-control'); if (node) node.remove(); })()");
+
+    // (d) 真实触发条件：长会话可滚动后，滚动/重排会让固定 UI 滑到卡片工具栏带上。
+    // sweep 每 700ms 跑一次，多个周期后应用 UI 仍必须在（这是用户实际遇到的场景）。
+    const longCase = await evaluate(`(() => {
+      const spacer = document.createElement('div');
+      spacer.id = 'long-conversation-spacer';
+      spacer.style.cssText = 'height:2600px';
+      document.body.insertBefore(spacer, document.querySelector('#tall-case'));
+
+      const dock = document.createElement('div');
+      dock.id = 'longcase-dock';
+      dock.setAttribute('role', 'dialog');
+      dock.style.cssText = 'position:fixed;z-index:2147483600;left:0;top:0;width:100%;height:64px;background:#f2f2f0;color:#111;border-bottom:1px solid #333';
+      const left = document.createElement('div');
+      left.id = 'longcase-top-left-buttons';
+      left.style.cssText = 'position:fixed;left:8px;top:8px;display:flex;gap:4px';
+      for (let i = 0; i < 3; i += 1) {
+        const button = document.createElement('button');
+        button.id = 'longcase-button-' + i;
+        button.setAttribute('aria-label', 'pane ' + i);
+        button.textContent = 'P' + i;
+        left.appendChild(button);
+      }
+      document.body.appendChild(dock);
+      document.body.appendChild(left);
+
+      const card = ${overlayCard};
+      const band = card.querySelector('.tpr-toolbar').getBoundingClientRect();
+      const targetTop = 6;
+      window.scrollBy(0, band.top - targetTop);
+      const after = card.querySelector('.tpr-toolbar').getBoundingClientRect();
+      return {
+        scrollable: document.documentElement.scrollHeight > window.innerHeight + 500,
+        scrolled: window.scrollY > 0,
+        toolbarAtTop: after.top >= 0 && after.top < 20,
+        dockCovers: after.top < 64 && after.left < window.innerWidth
+      };
+    })()`);
+    await sleep(2600);
+    const longState = await evaluate(`(() => {
+      const dock = document.getElementById('longcase-dock');
+      const left = document.getElementById('longcase-top-left-buttons');
+      const buttons = left ? Array.prototype.slice.call(left.querySelectorAll('button')) : [];
+      return {
+        dockHidden: !dock || getComputedStyle(dock).display === 'none',
+        leftHidden: !left || getComputedStyle(left).display === 'none',
+        hiddenButtons: buttons.filter((button) => getComputedStyle(button).display === 'none').length,
+        buttonCount: buttons.length
+      };
+    })()`);
+    check('a long conversation actually became scrollable', () => assert(longCase.scrollable && longCase.scrolled, JSON.stringify(longCase)));
+    check('scrolling parked the card toolbar under the fixed app UI', () => assert(longCase.toolbarAtTop && longCase.dockCovers, JSON.stringify(longCase)));
+    check('app UI survives repeated sweeps after a long-conversation scroll', () =>
+      assert(!longState.dockHidden && !longState.leftHidden && longState.hiddenButtons === 0 && longState.buttonCount === 3, JSON.stringify(longState)));
+    await evaluate("(() => { ['longcase-dock','longcase-top-left-buttons','long-conversation-spacer'].forEach((id) => { const node = document.getElementById(id); if (node) node.remove(); }); })()");
 
     // --- no runtime errors ---------------------------------------------
     check('page reported no runtime errors', () => assert.strictEqual(consoleErrors.length, 0, consoleErrors.join(' | ')));
