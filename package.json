@@ -1,6 +1,6 @@
 {
   "name": "@arsonist-g/claude-desktop-render-patch",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Mermaid and full MathJax rendering patch for Claude Desktop, with an interactive npm CLI.",
   "publishConfig": {
     "access": "public"
