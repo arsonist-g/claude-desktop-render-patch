@@ -3,7 +3,7 @@
 .SYNOPSIS
     移除“Open project in Claude Desktop”右键菜单。
 .DESCRIPTION
-    同时清理 HKCU 和 HKLM 两处，并删除抽出来的图标文件；清理 HKLM 和 ProgramData 需要管理员。
+    同时清理 HKCU 和 HKLM 两处，并删除生成的图标；清理 HKLM 和 ProgramData 需要管理员。
 #>
 [CmdletBinding()]
 param()
@@ -30,21 +30,20 @@ foreach ($classesRoot in @('HKCU:\Software\Classes', 'HKLM:\Software\Classes')) 
     }
 }
 
-# 清掉抽出来的图标，只在目录里确实只剩我们自己的文件时才删目录。
+# 清掉生成的图标，只在目录里确实没有别的东西时才删目录。
 foreach ($base in @($env:LOCALAPPDATA, $env:ProgramData)) {
     if (-not $base) { continue }
-    $dir = Join-Path $base 'ClaudeOpenProject'
-    $ico = Join-Path $dir 'claude.ico'
+    $directory = Join-Path $base 'ClaudeOpenProject'
     try {
-        if (Test-Path -LiteralPath $ico) {
-            Remove-Item -LiteralPath $ico -Force
-            Write-Host ("已删除图标 {0}" -f $ico)
-        }
-        if ((Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force)) {
-            Remove-Item -LiteralPath $dir -Force
+        if (Test-Path -LiteralPath $directory) {
+            Get-ChildItem -LiteralPath $directory -Filter 'claude*.ico' -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+            if (-not (Get-ChildItem -LiteralPath $directory -Force)) {
+                Remove-Item -LiteralPath $directory -Force
+            }
         }
     } catch {
-        Write-Warning ("清理 {0} 失败：{1}" -f $dir, $_.Exception.Message)
+        Write-Warning ("清理 {0} 失败：{1}" -f $directory, $_.Exception.Message)
     }
 }
 

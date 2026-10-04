@@ -39,11 +39,15 @@
 | 项目 | 值 |
 | --- | --- |
 | 菜单文字 | `Open project in Claude Desktop`（可用 `-Label` 改） |
-| 图标 | 安装时从 `claude.exe` 抽出，存到 `%ProgramData%\ClaudeOpenProject\claude.ico` |
+| 图标 | 安装时从 `claude.exe` 抽出 256×256 全彩图标，拼成 16/20/24/32/48/256 六个尺寸的 32 位 ico，存到 `%ProgramData%\ClaudeOpenProject\` |
 | 排序 | `Position=Top`，排在右键菜单最前面 |
 | 生效位置 | 文件夹、文件夹空白处、磁盘根目录 |
 
 图标之所以要抽出来，是因为 Claude 装在 `C:\Program Files\WindowsApps\Claude_<版本>\...`，升级后目录会变；存成固定路径的 `.ico` 后，Claude 升级不会让菜单图标消失。
+
+图标文件名带内容哈希（`claude-<hash8>.ico`）：一是绕开资源管理器的图标缓存，二是每次重新安装会自动清掉旧文件。
+
+注意不能图省事用 `Icon.ExtractAssociatedIcon` 抽图 —— 它只给一个 16 色的 32×32 图标，菜单按 16×16 取图时会被降成灰白色。所以这里先用 `PrivateExtractIcons` 取 256×256 全彩，再自己拼多尺寸 ICO。
 
 ## 生效时机
 
